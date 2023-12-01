@@ -11,9 +11,7 @@ from problem import SCProblem
 from cvxpygen import cpg
 
 class Scvx:
-	"""
-	A 2D path planning problem.
-	"""
+	
 	def __init__(self, dim_x, dim_u, K, iterations, w_nu, tr_radius, rho_0, rho_1, rho_2, alpha, beta, solver, verbose_solver, v_max, w_max, upper_bound, lower_bound, robot_radius, r_init, r_final, u_init, u_final, t_f_guess, s_prime, obstacles, f, x, u):
 		self.dim_x = dim_x
 		self.dim_u = dim_u
@@ -46,9 +44,11 @@ class Scvx:
 		self.obstacles = obstacles
 
 		for i,_ in enumerate(self.obstacles):
-			self.s_prime.append(cvx.Variable((self.K, 1), nonneg=True))
+			self.s_prime.append(cvx.Variable((self.K, 1), name=("s_prime_"+str(i)), nonneg=True))
+		# print(self.s_prime)
+		# input()
 		
-		# nondimensionalize all parameters and boundaries
+		""" nondimensionalize all parameters and boundaries """
 		self.v_max /= self.r_scale
 		self.upper_bound /= self.r_scale
 		self.lower_bound /= self.r_scale
@@ -67,8 +67,8 @@ class Scvx:
 		U_i = U[figures_i, :, :]
 		K = X_i.shape[1]
 
-		gs1 = gridspec.GridSpec(nrows=1, ncols=1, left=0.1, right=0.9, top=0.9, bottom=0.4)
-		gs2 = gridspec.GridSpec(nrows=1, ncols=2, left=0.1, right=0.9, top=0.3, bottom=0.1)
+		gs1 = gridspec.GridSpec(nrows=1, ncols=1, left=0.05, right=0.95, top=0.95, bottom=0.35)
+		gs2 = gridspec.GridSpec(nrows=1, ncols=2, left=0.1, right=0.9, top=0.3, bottom=0.05)
 
 		ax = fig.add_subplot(gs1[0, 0])
 		ax.set_xlim(self.lower_bound, self.upper_bound)
@@ -145,6 +145,23 @@ class Scvx:
 		self.my_plot(fig, figures_i)
 		cid = fig.canvas.mpl_connect('key_press_event', self.key_press_event)
 		plt.show()
+		
+	def plot2(self, X_in, U_in, sigma_in, it):
+		global figures_i, figures_N
+		figures_N = X_in.shape[0]
+		figures_i = figures_N - 1
+
+		global X, U, sigma
+		X = X_in
+		U = U_in
+		sigma = sigma_in
+
+		fig = plt.figure(figsize=(10, 12))
+		fig.set_siz
+		self.my_plot(fig, figures_i)
+		cid = fig.canvas.mpl_connect('key_press_event', self.key_press_event)
+		name = 'Python_iter_' + str(it) + '.png'
+		plt.savefig(name)
 
 	def euler_to_quat(self, a):
 		a = np.deg2rad(a)
@@ -330,7 +347,7 @@ class Scvx:
 							X_last = X, U_last = U, tmp = tmp_obstacle,
 							weight_nu = self.w_nu, tr_radius = self.tr_radius)
 		
-		cpg.generate_code(problem.prob, code_dir=dir_name, solver='ECOS')
+		cpg.generate_code(problem.prob, code_dir=dir_name, solver='SCS')
 
 		self.f = sp.simplify(self.f)
 		self.A = sp.simplify(self.f.jacobian(self.x))
@@ -411,7 +428,6 @@ class Scvx:
 		with open(dir_name+"/c/src/SCvx.c", "w") as scvx:
 			scvx.write("#include <stdio.h>\n")
 			scvx.write("#include <stdlib.h>\n")
-			scvx.write("#include <math.h>\n")
 			scvx.write("#include \"cpg_workspace.h\"\n")
 			scvx.write("#include \"cpg_solve.h\"\n")
 			scvx.write("#include \"func.h\"\n")
@@ -479,7 +495,7 @@ class Scvx:
 			scvx.write("	for (c_int j = 0; j < K; j++)\n")
 			scvx.write("	{\n")
 			for i in range(self.obstacles.__len__()):
-				scvx.write("		cost += CPG_Result.prim->var"+ str(i+1) +"[j]; // cost += CPG_Result.prim->s_prime_"+ str(i+1) +"[j];\n")
+				scvx.write("		cost += CPG_Result.prim->s_prime_"+ str(i) +"[j];\n // cost += CPG_Result.prim->var"+ str(i+1) +"[j];")
 			scvx.write("	}")
 			scvx.write("	return cost;")
 			scvx.write("}")
@@ -825,7 +841,7 @@ class Scvx:
 			scvx.write("	{\n")
 			scvx.write("		for (c_int l = 0; l < dim_u; l++)\n")
 			scvx.write("		{\n")
-			scvx.write("			dVdt[count + j * dim_u + l] = result_tmp_u[l * dim_u + j] * (t / dt);\n")
+			scvx.write("			dVdt[count + j * dim_u + l] = result_tmp_u[j * dim_u + l] * (t / dt);\n")
 			scvx.write("		}\n")
 			scvx.write("	}\n")
 			scvx.write("	count += dim_x * dim_u;\n")
@@ -834,7 +850,7 @@ class Scvx:
 			scvx.write("	{\n")
 			scvx.write("		for (c_int l = 0; l < dim_u; l++)\n")
 			scvx.write("		{\n")
-			scvx.write("			B_subs_matrix[l][j] = B_subs[j * dim_u + l];\n")
+			scvx.write("			B_subs_matrix[j][l] = B_subs[j * dim_u + l];\n")
 			scvx.write("		}\n")
 			scvx.write("	}\n")
 			scvx.write("\n")
@@ -895,29 +911,8 @@ class Scvx:
 			scvx.write("}\n")
 			scvx.write("\n")
 
-			scvx.write("void calculate_discretization(c_float *X, c_float *U, c_float *A_bar, c_float *B_bar, c_float *C_bar, c_float *z_bar)\n")
+			scvx.write("void calculate_discretization(c_float *X, c_float *U, c_float *A_bar, c_float *B_bar, c_float *C_bar, c_float *z_bar, c_float *V0)\n")
 			scvx.write("{\n")
-			scvx.write("	c_float V0[dim_x * (1 + dim_x + dim_u + dim_u + 1)];\n")
-			scvx.write("	for (c_int j = 0; j < dim_x * (1 + dim_x + dim_u + dim_u + 1); j++)\n")
-			scvx.write("	{\n")
-			scvx.write("		V0[j] = 0.0;\n")
-			scvx.write("	}\n")
-			scvx.write("	c_int index = dim_x;\n")
-			scvx.write("	for (c_int j = 0; j < dim_x; j++)\n")
-			scvx.write("	{\n")
-			scvx.write("		for (c_int k = 0; k < dim_x; k++)\n")
-			scvx.write("		{\n")
-			scvx.write("			if (k == j)\n")
-			scvx.write("			{\n")
-			scvx.write("				V0[index] = 1.0;\n")
-			scvx.write("			}\n")
-			scvx.write("			else\n")
-			scvx.write("			{\n")
-			scvx.write("				V0[index] = 0.0;\n")
-			scvx.write("			}\n")
-			scvx.write("			index++;\n")
-			scvx.write("		}\n")
-			scvx.write("	}\n")
 			scvx.write("	for (c_int k = 0; k < K - 1; k++)\n")
 			scvx.write("	{\n")
 			scvx.write("		for (c_int j = 0; j < dim_x; j++)\n")
@@ -934,12 +929,9 @@ class Scvx:
 			scvx.write("		{\n")
 			scvx.write("			for (c_int l = 0; l < dim_x; l++)\n")
 			scvx.write("			{\n")
-			scvx.write("				Phi[l][j] = V[dim_x + j * dim_x + l];\n")
+			scvx.write("                Phi[j][l] = V[dim_x + j * dim_x + l];\n")
+			scvx.write("				A_bar[l * dim_x + j + (k * dim_x * dim_x)] = V[dim_x + j * dim_x + l];\n")
 			scvx.write("			}\n")
-			scvx.write("		}\n")
-			scvx.write("		for (c_int j = 0; j < dim_x * dim_x; j++)\n")
-			scvx.write("		{\n")
-			scvx.write("			A_bar[j + (k * dim_x * dim_x)] = V[j + dim_x];\n")
 			scvx.write("		}\n")
 			scvx.write("		c_float matrix2[dim_x * dim_u];\n")
 			scvx.write("		c_float result[dim_x * dim_u];\n")
@@ -951,21 +943,22 @@ class Scvx:
 			scvx.write("			}\n")
 			scvx.write("		}\n")
 			scvx.write("		mat_mul(dim_x, dim_u, Phi, matrix2, result);\n")
-			scvx.write("		for (c_int j = 0; j < dim_x * dim_u; j++)\n")
-			scvx.write("		{\n")
-			scvx.write("			B_bar[j + k * dim_x * dim_u] = result[j]; \n")
-			scvx.write("		}\n")
 			scvx.write("		for (c_int j = 0; j < dim_x; j++)\n")
 			scvx.write("		{\n")
 			scvx.write("			for (c_int l = 0; l < dim_u; l++)\n")
 			scvx.write("			{\n")
+			scvx.write("                B_bar[l * dim_x + j + k * dim_x * dim_u] = result[j*dim_u+l];")
 			scvx.write("				matrix2[j * dim_u + l] = V[B_bar_end + j * dim_u + l];\n")
 			scvx.write("			}\n")
 			scvx.write("		}\n")
 			scvx.write("		mat_mul(dim_x, dim_u, Phi, matrix2, result);\n")
-			scvx.write("		for (c_int j = 0; j < dim_x * dim_u; j++)\n")
+			scvx.write("		for (c_int j = 0; j < dim_x; j++)\n")
 			scvx.write("		{\n")
-			scvx.write("			C_bar[j + k * dim_x * dim_u] = result[j]; \n")
+			scvx.write("			for (c_int l = 0; l < dim_u; l++)\n")
+			scvx.write("            {\n")
+			scvx.write("                C_bar[l * dim_x + j + k * dim_x * dim_u] = result[j*dim_u+l];\n")
+			scvx.write("                matrix2[j * dim_u + l] = V[B_bar_end + j * dim_u + l];\n")
+			scvx.write("            } \n")
 			scvx.write("		}\n")
 			scvx.write("		c_float matrix_2[dim_x];\n")
 			scvx.write("		c_float result2[dim_x];\n")
@@ -1056,6 +1049,7 @@ class Scvx:
 			scvx.write("	c_float B_bar[dim_x * dim_u * (K - 1)];\n")
 			scvx.write("	c_float C_bar[dim_x * dim_u * (K - 1)];\n")
 			scvx.write("	c_float z_bar[dim_x * (K - 1)];	\n")
+			scvx.write("	c_float V0[dim_x * (1 + dim_x + dim_u + dim_u + 1)];	\n")
 			scvx.write("\n")
 			scvx.write("	c_int first = 1;\n")
 			scvx.write("	c_int converged = 0;\n")
@@ -1064,6 +1058,27 @@ class Scvx:
 			scvx.write("\n")
 			scvx.write("	c_float actual_change;\n")
 			scvx.write("	c_float predicted_change;\n")
+			scvx.write("\n")
+			scvx.write("    for (c_int j = 0; j < dim_x * (1 + dim_x + dim_u + dim_u + 1); j++)\n")
+			scvx.write("    {\n")
+			scvx.write("        V0[j] = 0.0;\n")
+			scvx.write("    }\n")
+			scvx.write("    c_int index = dim_x;\n")
+			scvx.write("    for (c_int j = 0; j < dim_x; j++)\n")
+			scvx.write("    {\n")
+			scvx.write("        for (c_int k = 0; k < dim_x; k++)\n")
+			scvx.write("        {\n")
+			scvx.write("            if (k == j)\n")
+			scvx.write("            {\n")
+			scvx.write("                V0[index] = 1.0;\n")
+			scvx.write("            }\n")
+			scvx.write("            else\n")
+			scvx.write("            {\n")
+			scvx.write("                V0[index] = 0.0;\n")
+			scvx.write("            }\n")
+			scvx.write("            index++;\n")
+			scvx.write("        }\n")
+			scvx.write("    }\n")
 			scvx.write("\n")
 			scvx.write("	for (c_int j = 0; j < u_size; j++)\n")
 			scvx.write("	{\n")
@@ -1084,7 +1099,7 @@ class Scvx:
 			scvx.write("	for (it = 0; it < nb_iterations; it++)\n")
 			scvx.write("	{\n")
 			scvx.write("		printf(\"\\n\\nIteration %d\\n\", it);\n")
-			scvx.write("		calculate_discretization(X, U, A_bar, B_bar, C_bar, z_bar);\n")
+			scvx.write("		calculate_discretization(X, U, A_bar, B_bar, C_bar, z_bar, V0);\n")
 			scvx.write("\n")
 			scvx.write("		for (c_int j = 0; j < nb_obstacles; j++)\n")
 			scvx.write("		{\n")
@@ -1155,11 +1170,11 @@ class Scvx:
 			scvx.write("			if (last_nonlinear_cost == 0)\n")
 			scvx.write("			{\n")
 			scvx.write("				last_nonlinear_cost = nonlinear_cost;\n")
-			scvx.write("				for (i = 0; i < 90; i++)\n")
+			scvx.write("				for (i = 0; i < x_size; i++)\n")
 			scvx.write("				{\n")
 			scvx.write("					X[i] = new_X[i];\n")
 			scvx.write("				}\n")
-			scvx.write("				for (i = 0; i < 90; i++)\n")
+			scvx.write("				for (i = 0; i < u_size; i++)\n")
 			scvx.write("				{\n")
 			scvx.write("					U[i] = new_U[i];\n")
 			scvx.write("				}\n")
@@ -1230,23 +1245,181 @@ class Scvx:
 			scvx.write("	return 0;\n")
 			scvx.write("}\n")
 
-	def solve(self):
-		# state and input
+	def read(self, A_bar, B_bar, C_bar, z_bar, X, U, tmp, weight_nu, tr_radius):
+		with open('./Python_Scp/X_output_c.txt', 'r') as f:
+			for j in range(self.K):
+				for k in range(self.dim_x):
+					line = f.readline()
+					X[k,j] = float(line)
+		with open('./Python_Scp/U_output_c.txt', 'r') as f:
+			for j in range(self.K):
+				for k in range(self.dim_u):
+					line = f.readline()
+					U[k,j] = float(line)
+		with open('./Python_Scp/A_output_c.txt', 'r') as f:
+			for j in range(self.K-1):
+				for k in range(self.dim_x*self.dim_x):
+					line = f.readline()
+					A_bar[k,j] = float(line)
+		with open('./Python_Scp/B_output_c.txt', 'r') as f:
+			for j in range(self.K-1):
+				for k in range(self.dim_x*self.dim_u):
+					line = f.readline()
+					B_bar[k,j] = float(line)
+		with open('./Python_Scp/C_output_c.txt', 'r') as f:
+			for j in range(self.K-1):
+				for k in range(self.dim_x*self.dim_u):
+					line = f.readline()
+					C_bar[k,j] = float(line)
+		with open('./Python_Scp/z_output_c.txt', 'r') as f:
+			for j in range(self.K-1):
+				for k in range(self.dim_x):
+					line = f.readline()
+					z_bar[k,j] = float(line)
+		with open('./Python_Scp/O_output_c.txt', 'r') as f:
+			for j in range(self.K):
+				for k in range(self.dim_x):
+					line = f.readline()
+					tmp[k,j] = float(line)
+		with open('./Python_Scp/R_output_c.txt', 'r') as f:
+			line = f.readline()
+			self.tr_radius = float(line)
+		with open('./Python_Scp/Nu_output_c.txt', 'r') as f:
+			line = f.readline()
+			self.weight_nu = float(line)
+
+	def dump(self, A_bar, B_bar, C_bar, z_bar, X, U, tmp, weight_nu, tr_radius, nu):
+		with open('./Python_Scp/X_output.txt', 'w') as f:
+			for j in range(self.K):
+				for k in range(self.dim_x):
+					f.write(str(X[k,j]))
+					f.write("\n")
+		with open('./Python_Scp/U_output.txt', 'w') as f:
+			for j in range(self.K):
+				for k in range(self.dim_u):
+					f.write(str(U[k,j]))
+					f.write("\n")
+		with open('./Python_Scp/A_output.txt', 'w') as f:
+			for j in range(self.K-1):
+				for k in range(self.dim_x*self.dim_x):
+					f.write(str(A_bar[k,j]))
+					f.write("\n")
+		with open('./Python_Scp/B_output.txt', 'w') as f:
+			for j in range(self.K-1):
+				for k in range(self.dim_x*self.dim_u):
+					f.write(str(B_bar[k,j]))
+					f.write("\n")
+		with open('./Python_Scp/C_output.txt', 'w') as f:
+			for j in range(self.K-1):
+				for k in range(self.dim_x*self.dim_u):
+					f.write(str(C_bar[k,j]))
+					f.write("\n")
+		with open('./Python_Scp/z_output.txt', 'w') as f:
+			for j in range(self.K-1):
+				for k in range(self.dim_x):
+					f.write(str(z_bar[k,j]))
+					f.write("\n")
+		with open('./Python_Scp/O_output.txt', 'w') as f:
+			for j in range(self.K):
+				for k in range(self.dim_x):
+					f.write(str(tmp[k,j]))
+					f.write("\n")
+		with open('./Python_Scp/nu_output.txt', 'w') as f:
+			for j in range(self.dim_x * (self.K - 1)):
+				f.write(str(nu[k]))
+				f.write("\n")
+		with open('./Python_Scp/R_output.txt', 'w') as f:
+			f.write(str(tr_radius))
+			f.write("\n")
+		with open('./Python_Scp/Nu_output.txt', 'w') as f:
+			f.write(str(weight_nu))
+			f.write("\n")
+
+	def print_results(self):
 		X = np.empty(shape=[self.dim_x, self.K])
 		U = np.empty(shape=[self.dim_u, self.K])
-
-		X, U = self.initialize_trajectory(X, U)
-
+		integrator = FirstOrderHold(self, self.K, self.t_f_guess)
+		A_bar, B_bar, C_bar, z_bar = integrator.calculate_discretization(X, U)
+		tmp = self.K * self.obstacles.__len__()
+		tmp_obstacle = np.ndarray((self.dim_x, tmp))
+		self.read(A_bar, B_bar, C_bar, z_bar, X, U, tmp_obstacle, self.w_nu, self.tr_radius)
 		all_X = [self.x_redim(X.copy())]
 		all_U = [self.u_redim(U.copy())]
+		self.v_max *= self.r_scale
+		self.upper_bound *= self.r_scale
+		self.lower_bound *= self.r_scale
+		self.robot_radius *= self.r_scale
+		self.x_init[0:2] *= self.r_scale
+		self.x_final[0:2] *= self.r_scale
+		all_X2 = np.stack(all_X)
+		all_U2 = np.stack(all_U)
+		all_sigma2 = np.ones(self.K) * self.t_f_guess
+		self.plot(all_X2, all_U2, all_sigma2)
+		self.v_max *= self.r_scale
+		self.upper_bound /= self.r_scale
+		self.lower_bound /= self.r_scale
+		self.robot_radius /= self.r_scale
+		self.x_init[0:2] /= self.r_scale
+		self.x_final[0:2] /= self.r_scale
+
+	def solve(self):
+		# global tr_radius
+		# self.__init__(self.dim_x, self.dim_u, self.v_max, self.w_max, self.upper_bound, self.lower_bound, self.robot_radius, self.r_init, self.r_final, self.t_f_guess, self.s_prime, self.obstacles, self.f, self.x, self.u) # init modelisation
+		# m.nondimensionalize()
+
+		# state and input
+		X = np.empty(shape=[self.dim_x, self.K]) # K steps will be saved
+		U = np.empty(shape=[self.dim_u, self.K]) # K steps will be saved
+
+		# INITIALIZATION--------------------------------------------------------------------------------------------------------
+		# sigma = m.t_f_guess
+		X, U = self.initialize_trajectory(X, U)
+
+		# START SUCCESSIVE CONVEXIFICATION--------------------------------------------------------------------------------------
+		all_X = [self.x_redim(X.copy())]
+		all_U = [self.u_redim(U.copy())]
+
+		# self.v_max *= self.r_scale
+		# self.upper_bound *= self.r_scale
+		# self.lower_bound *= self.r_scale
+		# self.robot_radius *= self.r_scale
+		# self.x_init[0:2] *= self.r_scale
+		# self.x_final[0:2] *= self.r_scale
+		# all_X2 = np.stack(all_X)
+		# all_U2 = np.stack(all_U)
+		# all_sigma2 = np.ones(self.K) * self.t_f_guess
+		# self.plot(all_X2, all_U2, all_sigma2)
+		# self.v_max *= self.r_scale
+		# self.upper_bound /= self.r_scale
+		# self.lower_bound /= self.r_scale
+		# self.robot_radius /= self.r_scale
+		# self.x_init[0:2] /= self.r_scale
+		# self.x_final[0:2] /= self.r_scale
 
 		integrator = FirstOrderHold(self, self.K, self.t_f_guess)
 		problem = SCProblem(self, self.K)
 
-		first = True
+		# first = True
 		last_nonlinear_cost = None
 		converged = False
 		for it in range(self.iterations):
+			self.v_max *= self.r_scale
+			self.upper_bound *= self.r_scale
+			self.lower_bound *= self.r_scale
+			self.robot_radius *= self.r_scale
+			self.x_init[0:2] *= self.r_scale
+			self.x_final[0:2] *= self.r_scale
+			all_X2 = np.stack(all_X)
+			all_U2 = np.stack(all_U)
+			all_sigma2 = np.ones(self.K) * self.t_f_guess
+			self.plot2(all_X2, all_U2, all_sigma2, it)
+			self.v_max *= self.r_scale
+			self.upper_bound /= self.r_scale
+			self.lower_bound /= self.r_scale
+			self.robot_radius /= self.r_scale
+			self.x_init[0:2] /= self.r_scale
+			self.x_final[0:2] /= self.r_scale
+
 			t0_it = time()
 			print('-' * 50)
 			print('-' * 18 + f' Iteration {str(it + 1).zfill(2)} ' + '-' * 18)
@@ -1254,18 +1427,75 @@ class Scvx:
 
 			t0_tm = time()
 			A_bar, B_bar, C_bar, z_bar = integrator.calculate_discretization(X, U)
+			# print("A_bar : \n", A_bar)
+			# print("B_bar : \n", B_bar)
+			# print("C_bar : \n", C_bar)
+			# print("z_bar : \n", z_bar)
+			# input()
 			print(self.format_line('Time for transition matrices', time() - t0_tm, 's'))
 
 			tmp = self.K * self.obstacles.__len__()
 			tmp_obstacle = np.ndarray((self.dim_x, tmp))
+			# tmp1 = [None]*self.K
+			# for k in range(self.K):
+			# tmp_obstacle = [tmp1, tmp1, tmp1]
+			# print("[0]", tmp_obstacle[0])
+			# print(tmp_obstacle[0][5])
 			for i, obst in enumerate(self.obstacles):
 				p = obst[0]
 				for k in range(self.K):
-					tmp_obstacle[0:2, i*self.K+k] = (X[0:2, k] - p) * 1. /(np.linalg.norm((X[0:2, k] - p)) + 1e-6)
+					tmp_obstacle[0:2, i*self.K+k] = (X[0:2, k] - p) * 1 /(np.linalg.norm((X[0:2, k] - p)))
+					# tmp_obstacle[1, k] = (X[1, k] - p[1])/(np.linalg.norm((X[1, k] - p[1]),2) + 1e-6)
+				# print("size : ", tmp_obstacle[0].__len__())
+				# tmp_obstacle = np.concatenate((tmp_obstacle, X))
+				# print("size : ", tmp_obstacle[0].__len__())
+
+			# print("X : ",X)
+			# print("tmp : ",tmp_obstacle)
+			# input()
+			# tmp_obstacle = np.array(tmp_obstacle)
+
+			# print("A_bar size : ", A_bar.shape)
+			# print("B_bar size : ", B_bar.shape)
+			# print("C_bar size : ", C_bar.shape)
+			# print("z_bar size : ", z_bar.shape)
+			# print("X size : ", X.shape)
+			# print("U size : ", U.shape)
+			# print("tmp_obstacle size : ", tmp_obstacle.shape)
+			# print("self.w_nu : ", self.w_nu)
+			# print("self.tr_radius : ", self.tr_radius)
+			# print("A_bar : ", A_bar[:,0])
+
+			# self.read(A_bar, B_bar, C_bar, z_bar, X, U, tmp_obstacle, self.w_nu, self.tr_radius)
+			# all_X = [self.x_redim(X.copy())]
+			# all_U = [self.u_redim(U.copy())]
+
+			# self.v_max *= self.r_scale
+			# self.upper_bound *= self.r_scale
+			# self.lower_bound *= self.r_scale
+			# self.robot_radius *= self.r_scale
+			# self.x_init[0:2] *= self.r_scale
+			# self.x_final[0:2] *= self.r_scale
+			# all_X2 = np.stack(all_X)
+			# all_U2 = np.stack(all_U)
+			# all_sigma2 = np.ones(self.K) * self.t_f_guess
+			# self.plot2(all_X2, all_U2, all_sigma2, it)
+			# self.v_max *= self.r_scale
+			# self.upper_bound /= self.r_scale
+			# self.lower_bound /= self.r_scale
+			# self.robot_radius /= self.r_scale
+			# self.x_init[0:2] /= self.r_scale
+			# self.x_final[0:2] /= self.r_scale
+			# input()
+			# input()
+			# A_bar, B_bar, C_bar, z_bar = integrator.calculate_discretization(X, U)
+			# self.read(A_bar, B_bar, C_bar, z_bar, X, U, tmp_obstacle, self.w_nu, self.tr_radius)
 
 			problem.set_parameters(A_bar = A_bar, B_bar = B_bar, C_bar = C_bar, z_bar = z_bar,
 								X_last = X, U_last = U, tmp = tmp_obstacle,
 								weight_nu = self.w_nu, tr_radius = self.tr_radius)
+			
+			# instead of set_param, write param in file and call C solver 
 
 			while True:
 				if(it == 0):
@@ -1274,20 +1504,32 @@ class Scvx:
 					error = problem.solve(verbose=self.verbose_solver, solver=self.solver, max_iters=200, warm_start=True)
 				print(self.format_line('Solver Error', error))
 
+				# inject the C solver solution
+
 				# get solution
 				new_X = problem.get_variable('X')
 				new_U = problem.get_variable('U')
+				# print("new_X : \n", new_X)
+				# print("new_U : \n", new_U)
+				# input()
 
 				X_nl = integrator.integrate_nonlinear_piecewise(new_X, new_U)
+				# print("X_nl : \n", X_nl)
 
 				linear_cost_dynamics = np.linalg.norm(problem.get_variable('nu'), 1)
+				print("linear_cost_dynamics : \n",linear_cost_dynamics)
 				nonlinear_cost_dynamics = np.linalg.norm(new_X - X_nl, 1)
+				print("nonlinear_cost_dynamics : \n",nonlinear_cost_dynamics)
 
 				linear_cost_constraints = self.get_linear_cost()
+				print("linear_cost_constraints : \n", linear_cost_constraints)
 				nonlinear_cost_constraints = self.get_nonlinear_cost(X=new_X, U=new_U)
+				print("nonlinear_cost_constraints : \n", nonlinear_cost_constraints)
 
 				linear_cost = linear_cost_dynamics + linear_cost_constraints  # J
+				print("linear_cost : \n", linear_cost)
 				nonlinear_cost = nonlinear_cost_dynamics + nonlinear_cost_constraints  # L
+				print("nonlinear_cost : \n", nonlinear_cost)
 
 				if last_nonlinear_cost is None:
 					last_nonlinear_cost = nonlinear_cost
@@ -1296,14 +1538,16 @@ class Scvx:
 					break
 
 				actual_change = last_nonlinear_cost - nonlinear_cost  # delta_J
+				# print("actual_change : \n", actual_change)
 				predicted_change = last_nonlinear_cost - linear_cost  # delta_L
+				# print("predicted_change : \n", predicted_change)
+				# input()
 				print('')
 				print(self.format_line('Virtual Control Cost', linear_cost_dynamics))
 				print(self.format_line('Constraint Cost', linear_cost_constraints))
 				print('')
 				print(self.format_line('Actual change', actual_change))
 				print(self.format_line('Predicted change', predicted_change))
-				print(self.format_line('tr_radius', self.tr_radius))
 				print('')
 
 				if abs(actual_change) < 1e-6:
@@ -1340,19 +1584,53 @@ class Scvx:
 			print(self.format_line('Time for iteration', time() - t0_it, 's'))
 			print('')
 
+			# self.dump(A_bar, B_bar, C_bar, z_bar, X, U, tmp_obstacle, self.w_nu, self.tr_radius, problem.get_variable('nu'))
+
 			all_X.append(self.x_redim(X.copy()))
 			all_U.append(self.u_redim(U.copy()))
 
+			print("shape all_X : \n", all_X.__len__())
+
 			if converged:
 				print(f'Converged after {it + 1} iterations.')
+				print(X)
+				print()
+				print(U)
 				break
 
+			# self.v_max *= self.r_scale
+			# self.upper_bound *= self.r_scale
+			# self.lower_bound *= self.r_scale
+			# self.robot_radius *= self.r_scale
+
+			# self.x_init[0:2] *= self.r_scale
+			# self.x_final[0:2] *= self.r_scale
+
+			# all_X2 = np.stack(all_X)
+			# all_U2 = np.stack(all_U)
+			# all_sigma2 = np.ones(self.K) * self.t_f_guess
+
+			# self.plot(all_X2, all_U2, all_sigma2)
+
+			# self.v_max *= self.r_scale
+			# self.upper_bound /= self.r_scale
+			# self.lower_bound /= self.r_scale
+			# self.robot_radius /= self.r_scale
+
+			# self.x_init[0:2] /= self.r_scale
+			# self.x_final[0:2] /= self.r_scale
+
+			# input()
+		
 		all_X = np.stack(all_X)
 		all_U = np.stack(all_U)
 		all_sigma = np.ones(self.K) * self.t_f_guess
 
 		if not converged:
 			print('Maximum number of iterations reached without convergence.')
+
+		# save trajectory to file for visualization
+		# save_arrays('output/trajectory/', {'X': all_X, 'U': all_U, 'sigma': all_sigma})
 
 		# plot trajectory
 		self.v_max *= self.r_scale
@@ -1362,5 +1640,47 @@ class Scvx:
 
 		self.x_init[0:2] *= self.r_scale
 		self.x_final[0:2] *= self.r_scale
+
+		# print("is self.var['X'] DCP ?", problem.var['X'].is_dcp(dpp = False))
+		# print("is self.var['X'] DPP ?", problem.var['X'].is_dcp(dpp = True))
+
+		# print("is self.var['U'] DCP ?", problem.var['U'].is_dcp(dpp = False))
+		# print("is self.var['U'] DPP ?", problem.var['U'].is_dcp(dpp = True))
+
+		# print("is self.var['nu'] DCP ?", problem.var['nu'].is_dcp(dpp = False))
+		# print("is self.var['nu'] DPP ?", problem.var['nu'].is_dcp(dpp = True))
+
+		# print("is self.par['A_bar'] DCP ?", problem.par['A_bar'].is_dcp(dpp = False))
+		# print("is self.par['A_bar'] DPP ?", problem.par['A_bar'].is_dcp(dpp = True))
+
+		# print("is self.par['B_bar'] DCP ?", problem.par['B_bar'].is_dcp(dpp = False))
+		# print("is self.par['B_bar'] DPP ?", problem.par['B_bar'].is_dcp(dpp = True))
+
+		# print("is self.par['C_bar'] DCP ?", problem.par['C_bar'].is_dcp(dpp = False))
+		# print("is self.par['C_bar'] DPP ?", problem.par['C_bar'].is_dcp(dpp = True))
+
+		# print("is self.par['z_bar'] DCP ?", problem.par['z_bar'].is_dcp(dpp = False))
+		# print("is self.par['z_bar'] DPP ?", problem.par['z_bar'].is_dcp(dpp = True))
+
+		# print("is self.par['X_last'] DCP ?", problem.par['X_last'].is_dcp(dpp = False))
+		# print("is self.par['X_last'] DPP ?", problem.par['X_last'].is_dcp(dpp = True))
+
+		# print("is self.par['U_last'] DCP ?", problem.par['U_last'].is_dcp(dpp = False))
+		# print("is self.par['U_last'] DPP ?", problem.par['U_last'].is_dcp(dpp = True))
+
+		# print("is self.par['weight_nu'] DCP ?", problem.par['weight_nu'].is_dcp(dpp = False))
+		# print("is self.par['weight_nu'] DPP ?", problem.par['weight_nu'].is_dcp(dpp = True))
+
+		# print("is self.par['tr_radius'] DCP ?", problem.par['tr_radius'].is_dcp(dpp = False))
+		# print("is self.par['tr_radius'] DPP ?", problem.par['tr_radius'].is_dcp(dpp = True))
+
+		print("is problem DCP ?", problem.prob.is_dcp(dpp=False))
+		print("is problem DPP ?", problem.prob.is_dcp(dpp=True))
+
+		# print("is objective DCP ?", problem.objective.is_dcp(dpp=False))
+		# print("is objective DPP ?", problem.objective.is_dcp(dpp=True))
+
+		# print("is test DCP ?", problem.teeeest.is_dcp(dpp=False))
+		# print("is test DPP ?", problem.teeeest.is_dcp(dpp=True))
 
 		self.plot(all_X, all_U, all_sigma)
